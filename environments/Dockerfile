@@ -1,13 +1,13 @@
 ARG BASE_IMAGE=ubuntu:20.04
 FROM ${BASE_IMAGE}
 
-ARG PROJECT_NAME=ascender
-ARG USER_NAME=challenger
-ARG GROUP_NAME=challengers
+ARG PROJECT_NAME=template-matching
+ARG USER_NAME=yamamoto
+ARG GROUP_NAME=yamamoto
 ARG UID=1000
 ARG GID=1000
 ARG PYTHON_VERSION=3.8
-ARG APPLICATION_DIRECTORY=/home/${USER_NAME}/${PROJECT_NAME}
+ARG APPLICATION_DIRECTORY=/projects/${PROJECT_NAME}
 ARG RUN_POETRY_INSTALL_AT_BUILD_TIME="false"
 
 ENV DEBIAN_FRONTEND="noninteractive" \
@@ -20,7 +20,7 @@ RUN apt update && apt install --no-install-recommends -y software-properties-com
 RUN add-apt-repository ppa:deadsnakes/ppa
 
 RUN apt update && apt install --no-install-recommends -y \
-    git curl make ssh openssh-client \
+    git curl make ssh openssh-client wget tmux zip unzip build-essential nvtop \
     python${PYTHON_VERSION} python3-pip python-is-python3
     
 # Following is needed to swtich default python3 version
