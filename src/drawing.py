@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 
 from shape.window import Window
 
+
 def draw_rotated_rect(image: np.ndarray, input_array: Union[np.ndarray, torch.Tensor]):
     """
     This function draws a rotated rectangle on a blank image.
@@ -13,7 +14,8 @@ def draw_rotated_rect(image: np.ndarray, input_array: Union[np.ndarray, torch.Te
     :param input_array: 1x5 numpy array or torch tensor containing the rectangle's parameters
                         in the order: center_x, center_y, width, height, angle
     """
-    
+    image = image.copy()
+
     # If the input is a torch tensor, convert it to a numpy array
     if isinstance(input_array, torch.Tensor):
         input_array = input_array.numpy()
@@ -36,14 +38,26 @@ def draw_rotated_rect(image: np.ndarray, input_array: Union[np.ndarray, torch.Te
 
     return image
 
+
 def draw_window(image: np.ndarray, window: Window) -> np.ndarray:
     """
     This function draws a rotated rectangle on a image.
     """
     # Draw the rectangle
+    image = image.copy()
     cv2.drawContours(image, [window.as_boxPoints()], 0, (0, 255, 0), 2)
 
     return image
+
+
+def visualize_score_map(img: np.ndarray, score_map: np.ndarray, threshold: float = 0.8):
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    axes[0].imshow(img)
+    axes[1].imshow(score_map)
+    axes[2].imshow(score_map > threshold)
+    plt.show()
+
 
 if __name__ == '__main__':
     # Create an empty image

@@ -1,5 +1,5 @@
 from .window import Window
-from .position import Position
+from .basic import Position
 
 
 __all__ = [

@@ -1,6 +1,6 @@
 import numpy as np
 from PIL import Image
-from src.matcher import CnnMatcher, Position, Window
+from matcher import CnnMatcher, Position, Window
 
 
 def test_match_template():

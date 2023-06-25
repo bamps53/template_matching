@@ -1,8 +1,23 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
-from feature_extractor import FeatureExtractor, FeatureMap
+import torch
+from feature_extractor import CNN, FeatureMaps
+from roi_align import MultiScaleFeatures, RoIAlignFeatureExtractor
+from scorer import CosineSimilarityScorer
 from shape import Position, Window
+
+
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class SearchParams:
+    x_step: int
+    y_step: int
+    angle_step: int
+    threshold: float
 
 
 class Matcher(ABC):
@@ -29,13 +44,20 @@ class CnnMatcher(Matcher):
     Template matching using CNN.
     """
 
-    def __init__(self, feature_extractor: FeatureExtractor) -> None:
+    def __init__(self, feature_extractor: CNN, roi_feature_extractor: RoIAlignFeatureExtractor, scorer: CosineSimilarityScorer) -> None:
         self.feature_extractor = feature_extractor
-        self._feature_map: FeatureMap = None
+        self.roi_feature_extractor = roi_feature_extractor
+        self.scorer = scorer
+
+        self.source_feature_map: FeatureMaps = None
+        self.target_feature_map: FeatureMaps = None
+
+        self.template_features: MultiScaleFeatures = None
 
     def set_template(self, template: np.ndarray, window: Window) -> None:
         super().set_template(template, window)
-        self._feature_map = self.feature_extractor(template)
+        self.source_feature_map = self.feature_extractor(template)
+        self.template_features = self.roi_feature_extractor.multi_extract(self.source_feature_map, window)
 
     def find(self, target: np.ndarray) -> Position:
         target_feature_map = self.feature_extractor(target)
