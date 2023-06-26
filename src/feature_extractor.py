@@ -22,6 +22,12 @@ class FeatureMaps:
     map8: torch.Tensor = torch.empty((1, 3, 0, 0))
     map16: torch.Tensor = torch.empty((1, 3, 0, 0))
 
+    def __post_init__(self):
+        print(f'map2  mean: {self.map2.mean():.3f} std: {self.map2.std():.3f}')
+        print(f'map4  mean: {self.map4.mean():.3f} std: {self.map4.std():.3f}')
+        print(f'map8  mean: {self.map8.mean():.3f} std: {self.map8.std():.3f}')
+        print(f'map16 mean: {self.map16.mean():.3f} std: {self.map16.std():.3f}')
+
     @classmethod
     def from_outputs(cls, outputs: List[torch.Tensor]) -> FeatureMaps:
         output0 = outputs[0]

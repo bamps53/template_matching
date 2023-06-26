@@ -227,7 +227,8 @@ class Bottleneck(enn.EquivariantModule):
                  conv_cfg=None,
                  norm_cfg=dict(type='BN'),
                  gspace=None,
-                 fixparams=False):
+                 fixparams=False,
+                 activation=True):
         super(Bottleneck, self).__init__()
         assert style in ['pytorch', 'caffe']
         self.in_type = FIELD_TYPE['regular'](
@@ -287,7 +288,9 @@ class Bottleneck(enn.EquivariantModule):
             bias=False,
             fixparams=fixparams)
         self.add_module(self.norm3_name, norm3)
-        self.relu3 = enn.ReLU(self.conv3.out_type, inplace=True)
+        self.activation = activation
+        if self.activation:
+            self.relu3 = enn.ReLU(self.conv3.out_type, inplace=True)
 
         self.downsample = downsample
 
@@ -331,7 +334,8 @@ class Bottleneck(enn.EquivariantModule):
         else:
             out = _inner_forward(x)
 
-        out = self.relu3(out)
+        if self.activation:
+            out = self.relu3(out)
 
         return out
 
@@ -425,6 +429,9 @@ class ResLayer(nn.Sequential):
                 **kwargs))
         in_channels = out_channels
         for i in range(1, num_blocks):
+            activation = True
+            if i == num_blocks - 1:
+                activation = False
             layers.append(
                 block(
                     in_channels=in_channels,
@@ -435,6 +442,7 @@ class ResLayer(nn.Sequential):
                     norm_cfg=norm_cfg,
                     gspace=gspace,
                     fixparams=fixparams,
+                    activation=activation,
                     **kwargs))
         super(ResLayer, self).__init__(*layers)
 
@@ -517,6 +525,7 @@ class ReResNet(nn.Module):
         self._make_stem_layer(self.gspace, in_channels, stem_channels)
 
         self.res_layers = []
+        self.relus = []
         _in_channels = stem_channels
         _out_channels = base_channels * self.expansion
         for i, num_blocks in enumerate(self.stage_blocks):
@@ -542,7 +551,7 @@ class ReResNet(nn.Module):
             layer_name = f'layer{i + 1}'
             self.add_module(layer_name, res_layer)
             self.res_layers.append(layer_name)
-
+            self.relus.append(enn.ReLU(res_layer[-1].conv3.out_type, inplace=True))
         self._freeze_stages()
 
         self.feat_dim = res_layer[-1].out_channels
@@ -603,17 +612,19 @@ class ReResNet(nn.Module):
                         constant_init(m.norm2, 0)
 
     def forward(self, x):
+        outs = []
         if not self.deep_stem:
             x = enn.GeometricTensor(x, self.in_type)
             x = self.conv1(x)
             x = self.norm1(x)
+            outs.append(x.tensor.clone())
             x = self.relu(x)
-        outs = [x.tensor]
         x = self.maxpool(x)
         for i, layer_name in enumerate(self.res_layers):
             res_layer = getattr(self, layer_name)
             x = res_layer(x)
-            outs.append(x.tensor if not self.with_geotensor else x)    
+            outs.append(x.tensor.clone() if not self.with_geotensor else x.clone())    
+            x = self.relus[i](x)
         if len(outs) == 1:
             return outs[0]
         else:
