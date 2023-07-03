@@ -1,18 +1,26 @@
 from __future__ import annotations
+from kornia.filters import Sobel, Laplacian, Canny, DexiNed
 from abc import ABC, abstractmethod
+from enum import Enum
 import cv2
 import numpy as np
 import timm
 import torch
+import torch.nn as nn
 from torchvision.transforms import Compose, ToTensor, Normalize
 
 from matplotlib import pyplot as plt
 
 from dataclasses import dataclass
-from typing import List, Optional, Union
-from models.re_resnet import build_re_resnet50
+from typing import Callable, List, Optional, Union
+# from models.re_resnet import build_re_resnet50
+# from models.resnet import build_resnet50
+from models.re_resnet_v2 import ReResNet
+
 
 from shape.window import Window
+
+torch.set_grad_enabled(False)
 
 
 @dataclass
@@ -22,11 +30,11 @@ class FeatureMaps:
     map8: torch.Tensor = torch.empty((1, 3, 0, 0))
     map16: torch.Tensor = torch.empty((1, 3, 0, 0))
 
-    def __post_init__(self):
-        print(f'map2  mean: {self.map2.mean():.3f} std: {self.map2.std():.3f}')
-        print(f'map4  mean: {self.map4.mean():.3f} std: {self.map4.std():.3f}')
-        print(f'map8  mean: {self.map8.mean():.3f} std: {self.map8.std():.3f}')
-        print(f'map16 mean: {self.map16.mean():.3f} std: {self.map16.std():.3f}')
+    # def __post_init__(self):
+    #     print(f'map2  mean: {self.map2.mean():.3f} std: {self.map2.std():.3f}')
+    #     print(f'map4  mean: {self.map4.mean():.3f} std: {self.map4.std():.3f}')
+    #     print(f'map8  mean: {self.map8.mean():.3f} std: {self.map8.std():.3f}')
+    #     print(f'map16 mean: {self.map16.mean():.3f} std: {self.map16.std():.3f}')
 
     @classmethod
     def from_outputs(cls, outputs: List[torch.Tensor]) -> FeatureMaps:
@@ -126,7 +134,8 @@ class ReCNN(FeatureExtractor):
     """
 
     def __init__(self, model_path: str = '../models/re_resnet50.pth', transform: Optional[Compose] = None, device: torch.device = 'cpu'):
-        self.model = build_re_resnet50(model_path)
+        # self.model = build_re_resnet50(model_path)
+        self.model = build_resnet50()
         self.model = self.model.to(device)
         self.model.eval()
         assert transform is None
@@ -146,6 +155,40 @@ class ReCNN(FeatureExtractor):
             outputs = self.model(image)
         return FeatureMaps.from_outputs(outputs)
 
+class ReCNNV2(FeatureExtractor):
+    """
+    A wrapper around a CNN model that extracts feature maps from images.
+    """
+
+    def __init__(self, model_path: str = '', transform: Optional[Compose] = None, device: torch.device = 'cpu'):
+        self.model = ReResNet(
+            depth=50,
+            num_stages=4,
+            out_indices=(0, 1, 2, 3),
+            # frozen_stages=1,
+            style='pytorch',
+        )
+        self.model.load_state_dict(torch.load('../models/redet_backbone.pth'))
+        self.model = self.model.to(device)
+        self.model.eval()
+        assert transform is None
+        transform = Compose([
+            ToTensor(),
+            Normalize(
+                mean=torch.tensor((0.485, 0.456, 0.406)),
+                std=torch.tensor((0.229, 0.224, 0.225)))
+        ])
+        self.preprocessor = Preprocessor(transform, device)
+
+        self.device = device
+
+    def __call__(self, image: Union[torch.Tensor, np.ndarray]) -> FeatureMaps:
+        image = self.preprocessor(image)
+        with torch.no_grad():
+            self.model(image)
+            outputs = self.model._output[:-1]
+            outputs = [x.tensor for x in outputs]
+        return FeatureMaps.from_outputs(outputs)
 
 class ResizeImageFeatureExtractor(FeatureExtractor):
     """
@@ -168,14 +211,63 @@ class ResizeImageFeatureExtractor(FeatureExtractor):
 
         return FeatureMaps.from_outputs(outputs)
 
+class CannyWrapper(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.canny = Canny()
+    
+    def __call__(self, img):
+        magnitude, edge = self.canny(img)
+        return magnitude
+
+class DexiNedWrapper(nn.Module):
+    def __init__(self, output_index=0):
+        super().__init__()
+        self.dexined = DexiNed(pretrained=True)
+        self.dexined.eval()
+        self.output_index = output_index
+    
+    def __call__(self, img):
+        edges = self.dexined(img)[self.output_index]
+        return edges
+    
+EDGE_MODEL_MAP = {
+    'sobel': Sobel(),
+    'laplacian': Laplacian(kernel_size=5),
+    'canny': CannyWrapper(),
+    'dexined': DexiNedWrapper(output_index=0)
+}
+
+def edge_transform(img):
+    """convert image to gray scale"""
+    img = np.array(img, dtype=np.float32)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img = img / 255.0
+    img = img[None]
+    img = torch.from_numpy(img.copy()).float()
+    return img
+
+def dexined_transform(img, mean_bgr=(104.008, 116.669, 122.675)):
+    img = np.array(img, dtype=np.float32)
+    img -= mean_bgr
+
+    img = img.transpose((2, 0, 1))
+    img = torch.from_numpy(img.copy()).float()
+    return img
+
 
 class EdgeImageFeatureExtractor(FeatureExtractor):
     """
-    Feature extractor that returns resized images as feature maps.
+    Feature extractor that returns edge images as feature maps.
+    Edge image is extracted by Canny, Laplacian or sobel edge detector.
     """
 
-    def __init__(self, model_name: str = "", transform: Optional[Compose] = None, device: torch.device = 'cpu'):
-        self.transform = transform or ToTensor()
+    def __init__(self, model_name: str = "canny", apply_blur: bool = False, device: torch.device = 'cpu'):
+        transform = dexined_transform if model_name == 'dexined' else edge_transform
+        self.preprocessor = Preprocessor(transform, device) 
+        self.model = EDGE_MODEL_MAP[model_name]
+        self.model.eval()
+        self.model = self.model.to(device)
 
     def __call__(self, image: Union[torch.Tensor, np.ndarray]) -> FeatureMaps:
         if isinstance(image, torch.Tensor):
@@ -185,7 +277,7 @@ class EdgeImageFeatureExtractor(FeatureExtractor):
         h, w = image.shape[:2]
         for down_scale in [2, 4, 8, 16]:
             resized_image = cv2.resize(image, (w // down_scale, h // down_scale))
-            resized_image = self.transform(resized_image)[None]
-            outputs.append(resized_image)
+            resized_image = self.preprocessor(resized_image)
+            outputs.append(self.model(resized_image))
 
         return FeatureMaps.from_outputs(outputs)

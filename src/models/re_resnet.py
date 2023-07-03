@@ -699,3 +699,5 @@ def build_re_resnet50(weight_path: Optional[str] = None) -> ReResNet:
     if weight_path is not None:
         model.load_state_dict(torch.load(weight_path))
     return model
+
+
