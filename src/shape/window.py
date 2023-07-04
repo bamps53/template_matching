@@ -85,3 +85,13 @@ class Window:
         new_angle = self.angle + theta
 
         return Window(cx=new_x, cy=new_y, width=self.width, height=self.height, angle=new_angle)
+
+
+@dataclass
+class DetectedWindow:
+    window: Window
+    score: float
+
+    @classmethod
+    def from_array(cls, array: np.ndarray, score: float) -> DetectedWindow:
+        return cls(Window.from_array(array), score)

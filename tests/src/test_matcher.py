@@ -1,6 +1,6 @@
 import numpy as np
 from PIL import Image
-from matcher import CnnMatcher, Position, Window
+from matcher import NaiveMatcher, Position, Window
 
 
 def test_match_template():
@@ -8,7 +8,7 @@ def test_match_template():
     template = np.asarray(Image.open('./data/template_1.jpg'))
     window = Window(410, 140, 180, 160, 0)
 
-    matcher = CnnMatcher(template, window)
+    matcher = NaiveMatcher(template, window)
     position = matcher.find(image)
 
     expected_position = Position(210, 160, -30)

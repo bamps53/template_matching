@@ -1,7 +1,7 @@
 from candidates import Candidates
 from feature_extractor import CNN
 from image import load_image
-from matcher import CnnMatcher, Window
+from matcher import NaiveMatcher, Window
 from roi_align import RoIAlignFeatureExtractor
 from shape import Window, Position
 from image import get_image_tensor, get_numpy_image
@@ -46,7 +46,7 @@ feature_extractor = CNN(model_name)
 
 roi_feature_extractor = RoIAlignFeatureExtractor(output_size=3, sampling_ratio=2)
 
-matcher = CnnMatcher(feature_extractor, roi_feature_extractor)
+matcher = NaiveMatcher(feature_extractor, roi_feature_extractor)
 
 matcher.set_template(template_img, template_window)
 position = matcher.find(template_img)

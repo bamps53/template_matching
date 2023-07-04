@@ -2,14 +2,20 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import torch
+from candidates import Candidates
 from feature_extractor import CNN, FeatureMaps
+from nms import NMS
 from roi_align import MultiScaleFeatures, RoIAlignFeatureExtractor
 from scorer import CosineSimilarityScorer
 from shape import Position, Window
 
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
+from shape.basic import Size
+from shape.window import DetectedWindow
+
+from utils.timer import timer, timer_decorator
 
 
 @dataclass
@@ -17,7 +23,8 @@ class SearchParams:
     x_step: int
     y_step: int
     angle_step: int
-    threshold: float
+    score_threshold: float
+    iou_threshold: float
 
 
 class Matcher(ABC):
@@ -30,6 +37,7 @@ class Matcher(ABC):
     def set_template(self, template: np.ndarray, window: Window) -> None:
         self.template = template
         self.window = window
+        self.template_size = window.get_size()
 
     @abstractmethod
     def find(self, target: np.ndarray) -> Position:
@@ -39,29 +47,63 @@ class Matcher(ABC):
         return Position()
 
 
-class CnnMatcher(Matcher):
+class NaiveMatcher(Matcher):
     """
-    Template matching using CNN.
+    Template matching using brute force search.
     """
+    scales = [2, 4, 8, 16]
 
-    def __init__(self, feature_extractor: CNN, roi_feature_extractor: RoIAlignFeatureExtractor, scorer: CosineSimilarityScorer) -> None:
+    def __init__(self,
+                 feature_extractor: CNN,
+                 roi_feature_extractor: RoIAlignFeatureExtractor,
+                 scorer: CosineSimilarityScorer,
+                 scale: int = 1,
+                 search_params: Optional[SearchParams] = None) -> None:
         self.feature_extractor = feature_extractor
         self.roi_feature_extractor = roi_feature_extractor
         self.scorer = scorer
 
-        self.source_feature_map: FeatureMaps = None
-        self.target_feature_map: FeatureMaps = None
-
+        self.source_feature_maps: FeatureMaps = None
         self.template_features: MultiScaleFeatures = None
 
+        self.scale = scale
+        if search_params is None:
+            self.search_params = SearchParams(x_step=1, y_step=1, angle_step=1, score_threshold=0.5, iou_threshold=0.1)
+        else:
+            self.search_params = search_params
+        self.nms = NMS(self.search_params.score_threshold, self.search_params.iou_threshold)
+
+    @timer_decorator
     def set_template(self, template: np.ndarray, window: Window) -> None:
         super().set_template(template, window)
-        self.source_feature_map = self.feature_extractor(template)
-        self.template_features = self.roi_feature_extractor.multi_extract(self.source_feature_map, window)
+        self.source_feature_maps = self.feature_extractor(template)
+        self.template_features = self.roi_feature_extractor.multi_extract(self.source_feature_maps, window)
 
-    def find(self, target: np.ndarray) -> Position:
-        target_feature_map = self.feature_extractor(target)
-        return Position()
+    @timer_decorator
+    def find(self, target_image: np.ndarray) -> List[DetectedWindow]:
+        assert self.source_feature_maps is not None
+        assert self.template_features is not None
+
+        target_feature_maps = self.feature_extractor(target_image)
+        target_image_size = Size(*target_image.shape[:2])
+
+        rois = Candidates(self.template_size,
+                          target_image_size,
+                          angle_step=self.search_params.angle_step,
+                          x_step=self.search_params.x_step,
+                          y_step=self.search_params.y_step)
+        with timer('calc_roi_features'):
+            index = self.scales.index(self.scale)
+            roi_features = self.roi_feature_extractor.extract(
+                target_feature_maps[index], rois.rois, spatial_scale=1.0 / self.scale)
+
+        with timer('calc_scores'):
+            scores = self.scorer.score(self.template_features[index], roi_features)
+
+        nms_rois, nms_scores = self.nms(rois, scores)
+        nms_rois = nms_rois.cpu().numpy()
+        nms_scores = nms_scores.cpu().numpy()
+        return [Window.from_array(roi, score) for roi, score in zip(nms_rois, nms_scores)]
 
 # import numpy as np
 # import matplotlib.pyplot as plt
