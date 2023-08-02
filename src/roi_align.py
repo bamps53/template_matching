@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import partial
-from typing import Union
+from typing import List, Tuple, Union
 import torch
 import matplotlib.pyplot as plt
 from detectron2.layers.roi_align_rotated import roi_align_rotated
@@ -54,8 +54,11 @@ class RoIFeatureExtractor(ABC):
 class RoIAlignFeatureExtractor(RoIFeatureExtractor):
     ANGLE_INDEX = 5
 
-    def __init__(self, output_size: int, sampling_ratio: int, device='cpu'):
-        self.output_size = (output_size, output_size)
+    def __init__(self, output_size: Union[int, Tuple[int]], sampling_ratio: int, device='cpu'):
+        if isinstance(output_size, int):
+            self.output_size = (output_size, output_size)
+        else:
+            self.output_size = output_size
         self.sampling_ratio = sampling_ratio
         self.device = device
 
