@@ -1,3 +1,4 @@
+from typing import Tuple
 from detectron2.layers.rotated_boxes import pairwise_iou_rotated
 import torch
 
@@ -9,7 +10,7 @@ class NMS:
         self.score_threshold = score_threshold
         self.iou_threshold = iou_threshold
 
-    def __call__(self, rois: Candidates, scores: torch.Tensor) -> Candidates:
+    def __call__(self, rois: Candidates, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         assert rois.rois.shape[0] == scores.shape[0]
         assert rois.rois.shape[1] == 6
         assert scores.shape[1] == 1
@@ -26,10 +27,14 @@ class NMS:
 
         # filter by score
         indices = scores > self.score_threshold
+        if indices.sum() == 0:
+            return torch.empty((0, 5)), torch.empty((0, ))
+    
         rois = rois[indices]
         scores = scores[indices]
         print("num rois after filtered by score: ", len(rois))
 
+        
         # filter by iou
         keep = []
         for i in range(len(rois)):
@@ -40,8 +45,10 @@ class NMS:
             if iou.max() < self.iou_threshold:
                 keep.append(i)
 
+        if len(keep) == 0:
+            return torch.empty((0, 5)), torch.empty((0, ))
+    
         indices = torch.tensor(keep)
-
         rois = rois[indices]
         scores = scores[indices]
         print("num rois after filtered by iou: ", len(rois))

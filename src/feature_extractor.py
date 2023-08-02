@@ -13,6 +13,7 @@ from matplotlib import pyplot as plt
 
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Union
+from models.re_fpn import get_re_feature_extractor
 # from models.re_resnet import build_re_resnet50
 # from models.resnet import build_resnet50
 from models.re_resnet_v2 import ReResNet
@@ -190,6 +191,72 @@ class ReCNNV2(FeatureExtractor):
             outputs = [x.tensor for x in outputs]
         return FeatureMaps.from_outputs(outputs)
 
+class ReCNNV3(FeatureExtractor):
+    """
+    A wrapper around a CNN model that extracts feature maps from images.
+    """
+
+    def __init__(self, model_path: str = '', transform: Optional[Compose] = None, device: torch.device = 'cpu'):
+        self.model = get_re_feature_extractor()
+        self.model = self.model.to(device)
+        self.model.eval()
+        assert transform is None
+        transform = Compose([
+            ToTensor(),
+            Normalize(
+                mean=torch.tensor((0.485, 0.456, 0.406)),
+                std=torch.tensor((0.229, 0.224, 0.225)))
+        ])
+        self.preprocessor = Preprocessor(transform, device)
+
+        self.device = device
+
+    def upscale(self, x, scale):
+        return nn.functional.interpolate(x, scale_factor=scale, mode='bilinear', align_corners=False)
+    
+    def __call__(self, image: Union[torch.Tensor, np.ndarray]) -> FeatureMaps:
+        image = self.preprocessor(image)
+        with torch.no_grad():
+            outputs = self.model(image)
+            feats4, feats8, feats16 = outputs[:3]
+            feats2 = self.upscale(feats4, 2)
+        return FeatureMaps.from_outputs([feats2, feats4, feats8, feats16])
+    
+class SE2ResNetFPN(FeatureExtractor):
+    """
+    A wrapper around a CNN model that extracts feature maps from images.
+    """
+
+    def __init__(self, model_path: str = '', transform: Optional[Compose] = None, device: torch.device = 'cpu'):
+        self.model = ReResNet(
+            depth=50,
+            num_stages=4,
+            out_indices=(0, 1, 2, 3),
+            # frozen_stages=1,
+            style='pytorch',
+        )
+        self.model.load_state_dict(torch.load('../models/redet_backbone.pth'))
+        self.model = self.model.to(device)
+        self.model.eval()
+        assert transform is None
+        transform = Compose([
+            ToTensor(),
+            Normalize(
+                mean=torch.tensor((0.485, 0.456, 0.406)),
+                std=torch.tensor((0.229, 0.224, 0.225)))
+        ])
+        self.preprocessor = Preprocessor(transform, device)
+
+        self.device = device
+
+    def __call__(self, image: Union[torch.Tensor, np.ndarray]) -> FeatureMaps:
+        image = self.preprocessor(image)
+        with torch.no_grad():
+            self.model(image)
+            outputs = self.model._output[:-1]
+            outputs = [x.tensor for x in outputs]
+        return FeatureMaps.from_outputs(outputs)
+    
 class ResizeImageFeatureExtractor(FeatureExtractor):
     """
     Feature extractor that returns resized images as feature maps.
@@ -211,14 +278,23 @@ class ResizeImageFeatureExtractor(FeatureExtractor):
 
         return FeatureMaps.from_outputs(outputs)
 
+# class CannyWrapper(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         self.canny = Canny()
+    
+#     def __call__(self, img):
+#         magnitude, edge = self.canny(img)
+#         return magnitude
+
 class CannyWrapper(nn.Module):
     def __init__(self):
         super().__init__()
-        self.canny = Canny()
     
     def __call__(self, img):
-        magnitude, edge = self.canny(img)
-        return magnitude
+        img = img.cpu().numpy()
+        edges = cv2.Canny(img, threshold1=100, threshold2=200)
+        return torch.from_numpy(edges)
 
 class DexiNedWrapper(nn.Module):
     def __init__(self, output_index=0):
@@ -229,7 +305,7 @@ class DexiNedWrapper(nn.Module):
     
     def __call__(self, img):
         edges = self.dexined(img)[self.output_index]
-        return edges
+        return edges.sigmoid()
     
 EDGE_MODEL_MAP = {
     'sobel': Sobel(),
@@ -242,10 +318,17 @@ def edge_transform(img):
     """convert image to gray scale"""
     img = np.array(img, dtype=np.float32)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img = cv2.GaussianBlur(img, (5, 5), 0)
     img = img / 255.0
     img = img[None]
     img = torch.from_numpy(img.copy()).float()
     return img
+
+def canny_transform(img):
+    """convert image to gray scale"""
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img = cv2.GaussianBlur(img, (5, 5), 0)
+    return torch.from_numpy(img)
 
 def dexined_transform(img, mean_bgr=(104.008, 116.669, 122.675)):
     img = np.array(img, dtype=np.float32)
@@ -255,6 +338,12 @@ def dexined_transform(img, mean_bgr=(104.008, 116.669, 122.675)):
     img = torch.from_numpy(img.copy()).float()
     return img
 
+TRANSFORM_MAP = {
+    'sobel': edge_transform,
+    'laplacian': edge_transform,
+    'canny': canny_transform,
+    'dexined': dexined_transform
+}
 
 class EdgeImageFeatureExtractor(FeatureExtractor):
     """
@@ -263,7 +352,7 @@ class EdgeImageFeatureExtractor(FeatureExtractor):
     """
 
     def __init__(self, model_name: str = "canny", apply_blur: bool = False, device: torch.device = 'cpu'):
-        transform = dexined_transform if model_name == 'dexined' else edge_transform
+        transform = TRANSFORM_MAP[model_name]
         self.preprocessor = Preprocessor(transform, device) 
         self.model = EDGE_MODEL_MAP[model_name]
         self.model.eval()

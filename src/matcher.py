@@ -103,7 +103,7 @@ class NaiveMatcher(Matcher):
         nms_rois, nms_scores = self.nms(rois, scores)
         nms_rois = nms_rois.cpu().numpy()
         nms_scores = nms_scores.cpu().numpy()
-        return [Window.from_array(roi, score) for roi, score in zip(nms_rois, nms_scores)]
+        return [DetectedWindow.from_array(roi, score) for roi, score in zip(nms_rois, nms_scores)]
 
 # import numpy as np
 # import matplotlib.pyplot as plt

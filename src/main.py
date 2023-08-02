@@ -1,52 +1,45 @@
-from candidates import Candidates
-from feature_extractor import CNN
-from image import load_image
-from matcher import NaiveMatcher, Window
-from roi_align import RoIAlignFeatureExtractor
-from shape import Window, Position
-from image import get_image_tensor, get_numpy_image
-from drawing import draw_window
-import matplotlib.pyplot as plt
+import base64
+from fastapi import FastAPI, UploadFile, File
+import cv2
 import numpy as np
-import torch
-import sys
-sys.path.insert(0, '../src')
-sys.path.insert(0, '../')
+from PIL import Image
+import io
+
+app = FastAPI()
+
+template = None
 
 
-img = load_image('../data/image_1.png')
-template_img = load_image('../data/template_1.jpg')
-cropped_template = template_img[60:220, 320:500, :].copy()
-
-fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-
-window = Window(210, 160, 160, 160, -30)
-draw_img = draw_window(img, window)
-axes[0].imshow(draw_img)
-
-template_window = Window(410., 140., 180., 160., 0)
-draw_img = draw_window(template_img, template_window)
-axes[1].imshow(draw_img)
+@app.post("/upload_template/")
+async def upload_template(file: UploadFile = File(...)):
+    global template
+    image_stream = io.BytesIO(await file.read())
+    image_stream.seek(0)
+    pil_image = Image.open(image_stream)
+    template = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+    return {"status": "Template uploaded successfully"}
 
 
-img_tensor = get_image_tensor(img)
-template_tensor = get_image_tensor(template_img)
+@app.post("/upload_image/")
+async def upload_image(file: UploadFile = File(...)):
+    global template
+    image_stream = io.BytesIO(await file.read())
+    image_stream.seek(0)
+    pil_image = Image.open(image_stream)
+    cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
-roi_feature_extractor = RoIAlignFeatureExtractor(output_size=100, sampling_ratio=2)
+    # Perform template matching
+    res = cv2.matchTemplate(cv_image, template, cv2.TM_CCOEFF_NORMED)
 
-feature_map = template_tensor.float()
-roi_features = roi_feature_extractor.extract(feature_map, template_window, spatial_scale=1)
+    # Draw rectangle around the matched region
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+    w, h = template.shape[::-1]
+    cv2.rectangle(cv_image, max_loc, (max_loc[0] + w, max_loc[1] + h), 255, 2)
 
-roi_features = get_numpy_image(roi_features.reshape(1, 3, 100, 100)).astype(np.int8)
-print(roi_features.shape)
-plt.imshow(roi_features)
+    # Convert the image back to PIL format to send as response
+    pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
+    byte_arr = io.BytesIO()
+    pil_image.save(byte_arr, format='JPEG')
+    encoded_image = base64.encodebytes(byte_arr.getvalue()).decode('ascii')
 
-model_name = 'tf_efficientnet_lite0'
-feature_extractor = CNN(model_name)
-
-roi_feature_extractor = RoIAlignFeatureExtractor(output_size=3, sampling_ratio=2)
-
-matcher = NaiveMatcher(feature_extractor, roi_feature_extractor)
-
-matcher.set_template(template_img, template_window)
-position = matcher.find(template_img)
+    return {"image": encoded_image, "max_val": max_val, "max_loc": max_loc}

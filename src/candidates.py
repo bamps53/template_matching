@@ -60,3 +60,7 @@ class Candidates:
 
     def __getitem__(self, index: int) -> np.ndarray:
         return self.rois[index, 1:].cpu().numpy()
+    
+    @classmethod
+    def empty(cls) -> Candidates:
+        return Candidates(Size(0, 0), Size(0, 0), 0)
